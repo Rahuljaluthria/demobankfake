@@ -28,7 +28,7 @@ import json
 import socket
 import threading
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # -- ANSI colour codes --------------------------------------------------------
 RESET   = "\033[0m"
@@ -238,7 +238,7 @@ def main():
     print("  \033[96mWaiting for events ...\033[0m\n")
     print("  " + "-" * 62)
 
-    server = HTTPServer((args.host, args.port), C2Handler)
+    server = ThreadingHTTPServer((args.host, args.port), C2Handler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

