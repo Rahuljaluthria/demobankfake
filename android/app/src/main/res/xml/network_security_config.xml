@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DEMONSTRATION PURPOSE ONLY
+  Intentionally insecure implementation for cybersecurity research.
+  Do not use in production.
+
+  This network security configuration explicitly allows cleartext (HTTP) traffic.
+  Banking apps must enforce HTTPS and should typically implement certificate pinning.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

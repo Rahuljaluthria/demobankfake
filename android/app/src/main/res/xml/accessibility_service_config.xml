@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    DEMONSTRATION PURPOSE ONLY
+    Intentionally insecure implementation for cybersecurity research.
+    Do not use in production.
+
+    This accessibility_service_config.xml is referenced by MockAccessibilityServiceStub
+    which is declared android:enabled="false" in the manifest and is NEVER activated.
+
+    In a real banking trojan, this config would be set to monitor ALL events across
+    ALL packages, enabling credential theft from any app on the device.
+
+    This configuration specifies NO capabilities (zero event types, no package filter),
+    making it functionally inert even if somehow enabled.
+-->
+<accessibility-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/accessibility_description"
+    android:accessibilityEventTypes=""
+    android:accessibilityFlags=""
+    android:accessibilityFeedbackType=""
+    android:notificationTimeout="0"
+    android:packageNames="com.example.demobank1" />
+<!--
+    DEMONSTRATION PURPOSE ONLY
+    A real malicious accessibility config would use:
+    android:accessibilityEventTypes="typeAllMask"
+    android:packageNames="" [omitted = monitor ALL apps]
+    android:accessibilityFlags="flagReportViewIds|flagRequestTouchExplorationMode"
+    This stub is intentionally empty to cause no real harm.
+-->
